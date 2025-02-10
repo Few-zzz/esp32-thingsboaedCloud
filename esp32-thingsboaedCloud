@@ -1,0 +1,116 @@
+#include <WiFi.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+#include <HTTPClient.h>
+
+// Wi-Fi credentials
+const char* ssid = "ZZZ";        // Replace with your Wi-Fi SSID
+const char* password = "Lunarzzz"; // Replace with your Wi-Fi Password
+
+// ThingsBoard token
+String tbToken = "70792txkioc2pxivsssi";
+
+#define SCREEN_WIDTH 128 // OLED display width
+#define SCREEN_HEIGHT 64 // OLED display height
+
+// Default I2C Pins for ESP32
+#define SDA_PIN 21
+#define SCL_PIN 22
+
+// OLED reset pin
+#define OLED_RESET -1 // Use -1 if no reset pin
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+
+// ADC pin for voltage measurement
+#define ADC_PIN 34 // ADC pin (use GPIO2 for this example)
+float vRef = 3.3; // Reference voltage of ESP32
+float voltageDividerRatio = 12.0 / 2.833; // Adjust the ratio for 12V system
+
+void setup() {
+  // Initialize Serial Monitor
+  Serial.begin(115200);
+
+  // Initialize I2C for OLED
+  Wire.begin(SDA_PIN, SCL_PIN);
+
+  // Initialize OLED Display
+  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) { // Adjust I2C address if needed
+    Serial.println(F("OLED initialization failed!"));
+    for (;;);
+  }
+  display.clearDisplay();
+  display.setTextSize(1);  // Text size
+  display.setTextColor(SSD1306_WHITE); // Text color
+  display.display();
+
+  // Connect to Wi-Fi
+  WiFi.begin(ssid, password);
+}
+
+void loop() {
+  // Read voltage from ADC
+  int analogValue = analogRead(ADC_PIN);
+  float voltage = analogValue * vRef / 4095.0;
+
+  // Scale the measured voltage back to the original 12V system
+  float originalVoltage = voltage * voltageDividerRatio;
+
+  // Calculate battery percentage
+  float batteryPercentage = (originalVoltage / 12) * 100.0; // Scale voltage to percentage
+  if (batteryPercentage > 100) batteryPercentage = 100; // Clamp to 100%
+  if (batteryPercentage < 0) batteryPercentage = 0;     // Clamp to 0%
+
+  // Clear OLED display
+  display.clearDisplay();
+  display.setTextSize(1);  // Set text size for better readability
+
+  display.setCursor(0, 0);
+  display.print(F("Voltage Monitor "));
+  display.setCursor(0, 10);
+  display.print(F("------------------- "));
+  // Display Original Voltage (12V system)
+  display.setCursor(0, 20);
+  display.print(F("Voltage: "));
+  display.print(originalVoltage, 2);
+  display.println(F(" V"));
+
+  // Display Battery Percentage
+  display.setCursor(0, 30);
+  display.print(F("Battery: "));
+  display.print(batteryPercentage, 1);
+  display.println(F(" %"));
+
+  // Check Wi-Fi connection and update display
+  if (WiFi.status() == WL_CONNECTED) {
+    display.setCursor(0, 40);
+    display.println(F("Wi-Fi: Connected"));
+
+    // Send data to ThingsBoard
+    String serverName = "http://thingsboard.cloud/api/v1/" + tbToken + "/telemetry";
+    String jsonData = "{\"voltage\": " + String(originalVoltage) + ", \"batteryPercentage\": " + String(batteryPercentage) + "}";
+
+    HTTPClient http;
+    http.begin(serverName);
+    http.addHeader("Content-Type", "application/json"); // Set JSON header
+    int httpResponseCode = http.POST(jsonData);
+
+    display.setCursor(0, 50);
+    if (httpResponseCode > 0) {
+      display.println(F("Data sent")); // Indicate successful data transmission
+    } else {
+      display.println(F("Data not sent")); // Indicate failure
+    }
+
+    http.end(); // Free resources
+  } else {
+    // If Wi-Fi is not connected
+    display.setCursor(0, 40);
+    display.println(F("Wi-Fi: Connecting..."));
+    display.setCursor(0, 50);
+    display.println(F("Data not sent"));
+  }
+
+  // Update the OLED screen once after all text is set
+  display.display();
+  delay(1000); // Delay for 1 second
+}
